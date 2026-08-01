@@ -20,7 +20,7 @@ class LotkaVolterra(gym.Env):
 		)
 		self.r = params.get( # growth rates
 			'r',
-			0.5 * np.ones(self.n)
+			np.ones(self.n)
 		)
 		#
 		self.init_pops = 0.5 * np.ones(self.n)
@@ -56,7 +56,7 @@ class LotkaVolterra(gym.Env):
 		############
 		self._init_checks()
 
-	def reset(*, seed, options):
+	def reset(*, seed=42, options=None):
 		self.pops = (
 			self.init_pops 
 			+ self.init_noise * np.random.normal()
@@ -116,4 +116,83 @@ class LotkaVolterra(gym.Env):
 			self.obs_noise * np.random.normal()
 		)
 		return full_pseudo_obs[self.observed_species]
+
+
+
+class LVSampler:
+	def __init__(self, params):
+		self.sampler_type = params.get("sampler_type")
+		self.A_scale = params.get("A_scale", 1)
+
+		"""
+		Note: the growth rates r simply set a time-scale for each
+		species. We will assume that they all share the same scale,
+		which is set to 1 for convenience.
+		"""
+
+		self._init_checks()
+
+	def sample(self, n_sp):
+		sampler_fn = getattr(self.sampler_type)
+		return sampler_fn(n_sp)
+
+	def iid_uniform(self, n_sp):
+		# prefactor np.sqrt(12) is such that the 
+		# variance is sdev^2 / n_sp
+		return (
+			self.A_scale * 
+			np.ones(n_sp, n_sp) /
+			np.sqrt(n_sp)
+			+ 
+			(
+				self.A_scale *
+				np.sqrt(12) *
+				(np.random.rand(n_sp, n_sp) - 1/2) /
+				np.sqrt(n_sp)
+			)
+		)
+
+	def iid_gaussian(self, n_sp):
+		return np.random.normal(
+			loc = np.ones(n_sp, n_sp) / np.sqrt(n_sp),
+			scale = self.A_scale / np.sqrt(n_sp)
+		)
+
+	def gaussian_symm(self, n_sp):
+		A = np.random.normal(
+			loc = np.ones(n_sp, n_sp) / np.sqrt(n_sp),
+			scale = self.A_scale / np.sqrt(n_sp)
+		)
+		A = (A + A.T) / np.sqrt(2) 
+		# ^sqrt instead of 2 for the correct variance in off diagonal
+		np.fill_diagonal(A, A.diagonal() * np.sqrt(2))
+		# ^correct diagonal
+		return A
+
+
+	def _init_checks(self):
+		assert (
+			hasattr(self, self.sampler_type) and
+			callable(getattr(self,getattr(self.sampler_type)))
+		), (
+			"LVSampler: 'sampler_type' does not match any "
+			"implemented sampler."
+		)
+
+class RandomizedLotkaVolterra(LotkaVolterra):
+	def __init__(self, params):
+		super().__init__(params)
+		self.sampler_type = params.get("sampler_type", "uniform")
+		self.A_scale = params.get("A_scale", 1)
+		self.sampler = LVSampler(
+			params = {
+				'A_scale': self.A_scale,
+				'sampler_type': self.sampler_type
+			}
+		)
+
+	def reset(*, seed=42, options=None):
+		super().reset(seed=seed,options=options)
+		self.A = self.sampler.sample(n_sp = self.n)
+
 
